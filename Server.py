@@ -10,20 +10,21 @@ import tempfile
 import os
 import numpy as np
 import soundfile as sf
-import whisper
+from faster_whisper import WhisperModel
 import websockets
 
 # ── config ───────────────────────────────────────────────────────────────────
 HOST          = "0.0.0.0"
 PORT          = 8765
 SAMPLE_RATE   = 16000
-# Whisper model: "tiny" | "base" | "small" | "medium" | "large"
-# "base" is the best balance for a typical VPS
+# Model size: "tiny" | "base" | "small" | "medium" | "large-v2"
+# "base" recommended for CPU-only VPS
 WHISPER_MODEL = "base"
 # ─────────────────────────────────────────────────────────────────────────────
 
-print(f"Loading Whisper '{WHISPER_MODEL}'... (downloads on first run)")
-model = whisper.load_model(WHISPER_MODEL)
+print(f"Loading faster-whisper '{WHISPER_MODEL}'... (downloads on first run)")
+# cpu_threads=4 uses 4 CPU cores; lower if your VPS has fewer
+model = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8", cpu_threads=4)
 print("Whisper ready.\n")
 
 
@@ -31,13 +32,12 @@ def transcribe(audio_bytes: bytes) -> str:
     """Raw float32 PCM bytes → transcribed text."""
     signal = np.frombuffer(audio_bytes, dtype=np.float32)
 
-    # Whisper works best with a real file on disk
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         tmp_path = f.name
     try:
         sf.write(tmp_path, signal, SAMPLE_RATE)
-        result = model.transcribe(tmp_path, language="en", fp16=False)
-        return result["text"].strip()
+        segments, _ = model.transcribe(tmp_path, language="en", beam_size=5)
+        return " ".join(seg.text.strip() for seg in segments)
     finally:
         os.unlink(tmp_path)
 
